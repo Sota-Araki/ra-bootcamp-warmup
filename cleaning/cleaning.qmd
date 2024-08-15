@@ -1,0 +1,282 @@
+---
+title: "cleaning"
+author: "Sota Araki"
+format: html
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  warning = FALSE,       
+  message = FALSE
+  )
+```
+
+**cleaning後のデータはworkdataフォルダに格納する**
+
+# a. Semester Dataの整形
+
+## 1. 生データを読み込みなさい (semester_dummy_1.csv, semester_dummy_2.csv)
+
+```{r}
+# ライブラリの読み込み
+library(tidyverse)
+library(dplyr)
+library(purrr)
+library(readxl)
+```
+
+```{r}
+# データの読み込み
+semester1 <- read_csv("01_data/raw/semester_dummy/semester_data_1.csv")
+semester2 <- read_csv("01_data/raw/semester_dummy/semester_data_2.csv")
+```
+
+## 2. semester_dummy_1.csvについては、1行目を列名としなさい
+
+```{r}
+# 1行目を列名とする
+variable_names <- semester1[1,]
+colnames(semester1) <- variable_names
+# 1行目を削除
+semester1 <- semester1[-1,]
+```
+
+## 3. 2つのデータを適切に結合しなさい
+
+```{r}
+# 列名をそろえる
+colnames(semester2) <- variable_names
+```
+
+```{r}
+# semester1の変数の型の確認
+str(semester1)
+```
+
+```{r}
+# semester2の変数の型の確認
+str(semester2)
+```
+
+```{r}
+# 型を変更すべき変数を指定
+change_type_semester <- c("unitid", "semester", "quarter", "year", "Y")
+# semester1の変数の型を変更
+semester1 <- semester1 |> 
+  mutate(across(change_type_semester, as.numeric))
+# 変更後の型の確認
+str(semester1)
+```
+
+```{r}
+# データの結合
+semester <- rbind(semester1, semester2)
+```
+
+## 4. ʼYʼ列を削除しなさい
+
+```{r}
+# Y列を削除
+semester <- semester |> 
+  select(-Y)
+```
+
+## 5. semester制が導入された年の列を作成しなさい。
+
+```{r}
+semester <- semester  |> 
+  group_by(unitid) |> # データフレームを大学(unitid)ごとにグルーピング
+  mutate(semester_start_year = ifelse(any(semester == 1) & any(quarter == 1), min(year[semester == 1]), NA)) |> # semester制を期間中に導入した(semesterが1をとる年もquarterが1を取る年も存在する)大学を確認し、それ以外の大学はNAとする
+  # unitidごとにsemesterが1の年の中で最小の値(=導入された年)を取得、その年をsemester_start_yearとする
+  ungroup()
+```
+
+## 6. 5.を用いてsemester制導入後を示すダミー変数を作成しなさい
+
+```{r}
+# yearがsemester導入年より前なら0、導入年もしくはそれ以後なら1を示すダミー変数を作成
+semester <- semester |> 
+  mutate(semester_dummy = ifelse(year >= semester_start_year, 1, 0))
+```
+
+```{r}
+# データの書き出し
+write_csv(semester, "workdata/cleaned_semester_dummy_work.csv")
+```
+
+# (b) Gradrate Dataの整形
+
+## 1. 生データを読み込み、適切に結合しなさい
+
+```{r}
+# 読み込むファイルの範囲の指定
+years <- 1991:2016
+years <- setdiff(years, 1994)
+# 空のリストを用意
+all_data <- list()
+
+# forループを使ってファイルを読み込む
+for (year in years) {
+  file_name <- paste0("01_data/raw/outcome/",year, ".xlsx")  # ファイル名を生成
+  data <- read_excel(file_name)       # ファイルを読み込む
+  all_data[[as.character(year)]] <- data  # リストにデータを格納
+}
+
+# リストを結合
+cleaned_outcome <- bind_rows(all_data)
+```
+
+## 2. 女子学生の4年卒業率に0.01をかけて、0から1のスケールに変更しなさい
+
+```{r}
+# 女子学生の4年卒業率に0.01をかける
+cleaned_outcome <- cleaned_outcome |>
+  mutate(women_gradrate_4yr = women_gradrate_4yr * 0.01)
+```
+
+## 3. 男女合計の4年卒業率と男子学生の4年卒業率を計算し、新たな列として追加しなさい
+
+```{r}
+# 型の確認
+str(cleaned_outcome)
+# totcohortsizeとm_4yrgradsを数値型に修正
+change_type_outcome <- c("totcohortsize", "m_4yrgrads")
+cleaned_outcome <- cleaned_outcome |>
+  mutate(across(change_type_outcome, as.numeric))
+```
+
+```{r}
+# 型の確認
+str(cleaned_outcome)
+```
+
+```{r}
+# 男女合計の4年卒業率と男子学生の4年卒業率を計算
+cleaned_outcome <- cleaned_outcome |>
+  mutate(total_gradrate_4yr = tot4yrgrads/totcohortsize) |> 
+  mutate(men_gradrate_4yr = m_4yrgrads/m_cohortsize)
+```
+
+## 4. 計算した卒業率を有効数字3桁に調整しなさい
+
+```{r}
+# 卒業率変数のリスト
+gradrate_var <- c("women_gradrate_4yr", "total_gradrate_4yr", "men_gradrate_4yr")
+# 有効数字3桁に調整
+cleaned_outcome <- cleaned_outcome |>
+  mutate(across(gradrate_var, ~round(., 3)))
+```
+
+## 5. 1991年から2010年までのデータフレームに変形しなさい
+
+```{r}
+# 1991年から2010年までのデータを抽出
+year_start_outcome <- 1991
+year_end_outcome <- 2010
+cleaned_outcome <- cleaned_outcome |>
+  filter(year >= year_start_outcome) |> 
+  filter(year <= year_end_outcome)
+```
+
+```{r}
+# データの書き出し
+write_csv(cleaned_outcome, "workdata/cleaned_outcome_work.csv")
+```
+
+# (c) Covariates Dataの整形
+
+## 1. 生データを読み込みなさい
+
+```{r}
+# データの読み込み
+covariates <- read_xlsx("01_data/raw/covariates/covariates.xlsx")
+# 型の確認
+str(covariates)
+# year, valueを数値型に修正
+change_type_covariates <- c("year", "value")
+covariates <- covariates |> 
+  mutate(across(change_type_covariates, as.numeric))
+```
+
+```{r}
+# 型の確認
+str(covariates)
+```
+
+## 2. ʼuniversity_idʼという列名をʼunitidʼに変更しなさい
+
+```{r}
+# 列名の変更
+covariates <- covariates |>
+  rename(unitid = university_id)
+```
+
+## 3. ʼunitidʼに含まれる”aaaa”という文字を削除しなさい
+
+```{r}
+# "aaaa"の削除
+covariates$unitid <- str_remove(covariates$unitid, "aaaa")
+# 数値型に修正
+covariates$unitid <- as.numeric(covariates$unitid)
+# 型の確認
+str(covariates$unitid)
+```
+
+## 4. ‘categoryʼ列に含まれるʼinstatetuitionʼ, ‘costsʼ, ʼfacultyʼ, ʼwhite_cohortsizeʼ を別の列として追加しなさい(wide型に変更しなさい)
+
+```{r}
+# ‘categoryʼ列を変数名とし、value列を値とする変数をpivot_widerで追加
+covariates <- covariates |> 
+  pivot_wider(names_from = category,
+              values_from = value)
+```
+
+## 5. outcomeやsemester_dummyに含まれる年を調べ、covariatesデータの期間を他のデータに揃えなさい
+
+```{r}
+# outcomeとsemester_dummyのyear変数の記述統計を表示
+summary(semester$year)
+summary(cleaned_outcome$year)
+```
+
+```{r}
+# 1991年から2010年のデータを抽出
+year_start_covariates <- 1991
+year_end_covariates <- 2010
+covariates <- covariates |>
+  filter(year >= year_start_covariates) |> 
+  filter(year <= year_end_covariates)
+```
+
+## 6. outcome_dataに含まれるunitidを特定し、covariatesに含まれるunitidをoutcomeデータに揃えなさい
+
+```{r}
+# outcomeデータフレームの中から重複を許さずunitidの値を取り出す
+outcome_unitid <- unique(cleaned_outcome$unitid)
+# 取り出した値の中のいずれかと一致する行だけをcovariatesから取り出す
+covariates <- covariates |> 
+  filter(unitid %in% outcome_unitid)
+```
+
+```{r}
+# データの書き出し
+write_csv(covariates, "workdata/cleaned_covariates_work.csv")
+```
+
+# (d) Master Dataの作成
+
+## 1. 結合に用いる変数を考え、semester_data, covariates_data, gradrate_dataを適切に結合しなさい
+
+```{r}
+# 結合に用いる変数を指定
+join_var <- c("year", "unitid")
+# semesterとgraduate(outcome)を結合
+master <- left_join(semester, cleaned_outcome, by = join_var)
+# 更にcovariatesを結合
+master <- left_join(master, covariates, by = join_var)
+```
+
+```{r}
+# データの書き出し
+write_csv(master, "workdata/master_work.csv")
+```
